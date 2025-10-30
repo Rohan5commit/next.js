@@ -6,6 +6,7 @@ import { getTypeScriptConfiguration } from '../lib/typescript/getTypeScriptConfi
 import { readFileSync } from 'fs'
 import isError from '../lib/is-error'
 import { hasNecessaryDependencies } from '../lib/has-necessary-dependencies'
+import { renderCodeFrame } from '../shared/lib/errors/code-frame'
 
 let TSCONFIG_WARNED = false
 
@@ -23,9 +24,7 @@ export function parseJsonFile(filePath: string) {
     return JSON5.parse(contents)
   } catch (err) {
     if (!isError(err)) throw err
-    const { codeFrameColumns } =
-      require('next/dist/compiled/babel/code-frame') as typeof import('next/dist/compiled/babel/code-frame')
-    const codeFrame = codeFrameColumns(
+    const codeFrame = renderCodeFrame(
       String(contents),
       {
         start: {

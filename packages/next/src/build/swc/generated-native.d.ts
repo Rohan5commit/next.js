@@ -34,6 +34,51 @@ export declare class ExternalObject<T> {
     [K: symbol]: T
   }
 }
+export interface NapiLocation {
+  line: number
+  column?: number
+}
+export interface NapiCodeFrameLocation {
+  start: NapiLocation
+  end?: NapiLocation
+}
+export interface NapiCodeFrameOptions {
+  /** Number of lines to show above the error (default: 2) */
+  linesAbove?: number
+  /** Number of lines to show below the error (default: 3) */
+  linesBelow?: number
+  /** Maximum width of the output (default: terminal width) */
+  maxWidth?: number
+  /** Whether to use ANSI colors (default: true) */
+  forceColor?: boolean
+  /** Whether to highlight code syntax (default: true) */
+  highlightCode?: boolean
+  /** Optional message to display with the code frame */
+  message?: string
+  /** Language hint for keyword highlighting: "javascript" (default) or "css" */
+  language?: string
+}
+/**
+ * Renders a code frame showing the location of an error in source code
+ *
+ * This is a Rust implementation that replaces Babel's code-frame for better:
+ * - Performance on large files
+ * - Handling of long lines
+ * - Memory efficiency
+ *
+ * # Arguments
+ * * `source` - The source code to render
+ * * `location` - The location to highlight (line and column numbers are 1-indexed)
+ * * `options` - Optional configuration
+ *
+ * # Returns
+ * The formatted code frame string, or empty string if the location is invalid
+ */
+export declare function codeFrameColumns(
+  source: string,
+  location: NapiCodeFrameLocation,
+  options?: NapiCodeFrameOptions | undefined | null
+): string
 export declare function lockfileTryAcquireSync(
   path: string,
   content?: string | undefined | null

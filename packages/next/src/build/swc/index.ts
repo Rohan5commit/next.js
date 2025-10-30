@@ -21,6 +21,8 @@ import type {
   NapiPartialProjectOptions,
   NapiProjectOptions,
   NapiSourceDiagnostic,
+  NapiCodeFrameLocation,
+  NapiCodeFrameOptions,
 } from './generated-native'
 import type {
   Binding,
@@ -189,6 +191,11 @@ export function getBindingsSync(): Binding {
       'bindings not loaded yet.  Either call `loadBindings` to wait for them to be available or ensure that `installBindings` has already been called.'
     )
   }
+  return loadedBindings
+}
+
+/** Returns the loaded bindings if they are available. Otherwise returns `undefined` */
+export function tryGetBindingsSync(): Binding | undefined {
   return loadedBindings
 }
 
@@ -1424,6 +1431,17 @@ async function loadWasm(importPath = '') {
         imports
       )
     },
+    codeFrameColumns(
+      source: string,
+      location: NapiCodeFrameLocation,
+      options?: NapiCodeFrameOptions
+    ): string {
+      return rawBindings.codeFrameColumns(
+        Buffer.from(source),
+        location,
+        options
+      )
+    },
     lockfileTryAcquire(_filePath: string, _content?: string | null) {
       throw new Error(
         '`lockfileTryAcquire` is not supported by the wasm bindings.'
@@ -1656,6 +1674,7 @@ function loadNative(importPath?: string) {
       lockfileUnlockSync(lockfile: Lockfile) {
         return bindings.lockfileUnlockSync(lockfile)
       },
+      codeFrameColumns: bindings.codeFrameColumns,
     }
     return loadedBindings
   }
