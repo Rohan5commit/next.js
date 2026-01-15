@@ -1090,6 +1090,7 @@ pub struct ExperimentalConfig {
     use_cache: Option<bool>,
     root_params: Option<bool>,
     runtime_server_deployment_id: Option<bool>,
+    immutable_asset_token: Option<RcStr>,
 
     // ---
     // UNSUPPORTED
@@ -1116,7 +1117,7 @@ pub struct ExperimentalConfig {
     fully_specified: Option<bool>,
     gzip_size: Option<bool>,
 
-    pub inline_css: Option<bool>,
+    inline_css: Option<bool>,
     instrumentation_hook: Option<bool>,
     client_trace_metadata: Option<Vec<String>>,
     large_page_data_bytes: Option<f64>,
@@ -1892,7 +1893,13 @@ impl NextConfig {
     pub async fn asset_suffix_path(self: Vc<Self>) -> Result<Vc<Option<RcStr>>> {
         let this = self.await?;
 
-        match &this.deployment_id {
+        let deployment_id = this
+            .experimental
+            .immutable_asset_token
+            .as_ref()
+            .or(this.deployment_id.as_ref());
+
+        match deployment_id {
             Some(deployment_id) => Ok(Vc::cell(Some(format!("?dpl={deployment_id}").into()))),
             None => Ok(Vc::cell(None)),
         }
