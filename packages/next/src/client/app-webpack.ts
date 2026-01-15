@@ -3,8 +3,8 @@
 
 import './register-deployment-id-global'
 import {
-  getDeploymentId,
-  getDeploymentIdQueryOrEmptyString,
+  getImmutableAssetToken,
+  getImmutableAssetTokenQuery,
 } from '../shared/lib/deployment-id'
 import { encodeURIPath } from '../shared/lib/encode-uri-path'
 
@@ -12,8 +12,8 @@ declare const __webpack_require__: any
 
 // If we have a deployment ID, we need to append it to the webpack chunk names
 // I am keeping the process check explicit so this can be statically optimized
-if (getDeploymentId()) {
-  const suffix = getDeploymentIdQueryOrEmptyString()
+if (getImmutableAssetToken()) {
+  const suffix = getImmutableAssetTokenQuery()
   const getChunkScriptFilename = __webpack_require__.u
   __webpack_require__.u = (...args: any[]) =>
     // We encode the chunk filename because our static server matches against and encoded
