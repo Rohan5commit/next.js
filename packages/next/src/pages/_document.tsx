@@ -137,6 +137,7 @@ function getScripts(
     assetPrefix,
     buildManifest,
     isDevelopment,
+    deploymentId,
     assetQueryString,
     disableOptimizedLoading,
     crossOrigin,
@@ -148,10 +149,16 @@ function getScripts(
   )
 
   return [...normalScripts, ...lowPriorityScripts].map((file) => {
+    // static/chunks/51e975e7b637a580.js should use the immutable id, while static/_ssgManifest.js should use the deployment id
+    const query = file.startsWith('static/chunks')
+      ? assetQueryString
+      : deploymentId
+        ? `?dpl=${deploymentId}`
+        : ''
     return (
       <script
         key={file}
-        src={`${assetPrefix}/_next/${encodeURIPath(file)}${assetQueryString}`}
+        src={`${assetPrefix}/_next/${encodeURIPath(file)}${query}`}
         nonce={props.nonce}
         async={!isDevelopment && disableOptimizedLoading}
         defer={!disableOptimizedLoading}
