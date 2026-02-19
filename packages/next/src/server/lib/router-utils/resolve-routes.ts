@@ -9,6 +9,7 @@ import type { UnwrapPromise } from '../../../lib/coalesced-function'
 import type { NextUrlWithParsedQuery } from '../../request-meta'
 
 import path from 'node:path'
+import fs from 'node:fs/promises'
 import setupDebug from 'next/dist/compiled/debug'
 import { getCloneableBody } from '../../body-streams'
 import { filterReqHeaders, ipcForbiddenHeaders } from '../server-ipc/utils'
@@ -44,10 +45,11 @@ import {
   NEXT_REWRITTEN_QUERY_HEADER,
   RSC_HEADER,
 } from '../../../client/components/app-router-headers'
+import { recursiveReadDir } from '../../../lib/recursive-readdir'
 
 const debug = setupDebug('next:router-server:resolve-routes')
 
-export function getResolveRoutes(
+export async function getResolveRoutes(
   fsChecker: UnwrapPromise<
     ReturnType<typeof import('./filesystem').setupFsCheck>
   >,
@@ -57,6 +59,20 @@ export function getResolveRoutes(
   renderServerOpts: Parameters<RenderServer['initialize']>[0],
   ensureMiddleware?: (url?: string) => Promise<void>
 ) {
+  let clientHashes: Record<string, string> = {}
+  for (const manifestFile of await recursiveReadDir(
+    path.join(opts.dir, config.distDir, 'server'),
+    {
+      pathnameFilter: (file) => file.endsWith('client-hashes.json'),
+      relativePathnames: false,
+    }
+  )) {
+    Object.assign(
+      clientHashes,
+      JSON.parse(await fs.readFile(manifestFile, 'utf8'))
+    )
+  }
+
   type Route = {
     /**
      * The path matcher to check if this route applies to this request.
@@ -474,6 +490,37 @@ export function getResolveRoutes(
               if (output.locale) {
                 addRequestMeta(req, 'locale', output.locale)
               }
+
+              if (
+                process.env.IS_TURBOPACK_TEST &&
+                output.type === 'nextStaticFolder' &&
+                config.deploymentId
+              ) {
+                let useImmutableToken =
+                  config.experimental.immutableAssetToken &&
+                  clientHashes[
+                    removePathPrefix(
+                      removePathPrefix(pathname, config.basePath),
+                      '/_next'
+                    ).slice(1)
+                  ]
+
+                const expectedToken = useImmutableToken
+                  ? config.experimental.immutableAssetToken
+                  : config.deploymentId
+                if (parsedUrl.query.dpl !== expectedToken) {
+                  console.log(
+                    `Invalid dpl query param: ${req.url}, expected: ${expectedToken}`
+                  )
+                  return {
+                    finished: true,
+                    parsedUrl,
+                    resHeaders,
+                    matchedOutput: null,
+                  }
+                }
+              }
+
               return {
                 parsedUrl,
                 resHeaders,

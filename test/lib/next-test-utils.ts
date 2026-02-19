@@ -265,6 +265,7 @@ export interface NextOptions {
   stderr?: true | 'log'
   stdout?: true | 'log'
   ignoreFail?: boolean
+  disableAutoSkewProtection?: boolean
 
   onStdout?: (data: any) => void
   onStderr?: (data: any) => void
@@ -283,7 +284,7 @@ export function runNextCommand(
   const nextBin = path.join(nextDir, 'dist/bin/next')
   const cwd = options.cwd || nextDir
   // Let Next.js decide the environment
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     // @ts-ignore packages/next/types/global.d.ts should allow undefined NODE_ENV
     NODE_ENV: undefined as NodeJS.ProcessEnv['NODE_ENV'],
@@ -517,6 +518,12 @@ export function nextBuild(
   args: string[] = [],
   opts: NextOptions = {}
 ) {
+  if (!opts.disableAutoSkewProtection && shouldUseTurbopack() && !opts.env) {
+    opts.env ??= {}
+    opts.env.NEXT_DEPLOYMENT_ID = 'test-dpl-id-1234'
+    opts.env.VERCEL_IMMUTABLE_DEPLOYMENT_ID = 'test-immutable-tkn-7890'
+  }
+
   return runNextCommand(['build', dir, ...args], opts)
 }
 
@@ -2051,3 +2058,30 @@ export function getClientReferenceManifest(
 export const getCacheHeader = (curRes: Response) =>
   // favor generic header
   curRes.headers.get('x-nextjs-cache') || curRes.headers.get('x-vercel-cache')
+
+export function getDeploymentId(appDir: string) {
+  let requiredServerFiles
+  try {
+    requiredServerFiles = JSON.parse(
+      readFileSync(
+        path.join(appDir, getDistDir(), 'required-server-files.json'),
+        'utf8'
+      )
+    )
+  } catch {}
+
+  return {
+    deploymentId: requiredServerFiles?.config?.deploymentId,
+    getDeploymentIdQuery(ampersand = false) {
+      return requiredServerFiles?.config?.deploymentId
+        ? `${ampersand ? '&' : '?'}dpl=${requiredServerFiles?.config.deploymentId}`
+        : ''
+    },
+    immutableAssetToken: requiredServerFiles?.config?.immutableAssetToken,
+    getImmutableAssetTokenQuery(ampersand = false) {
+      return requiredServerFiles?.config?.immutableAssetToken
+        ? `${ampersand ? '&' : '?'}iat=${requiredServerFiles?.config.immutableAssetToken}`
+        : ''
+    },
+  }
+}

@@ -793,7 +793,7 @@ export async function initialize(opts: {
   process.on('uncaughtException', logError.bind(null, 'uncaughtException'))
   process.on('unhandledRejection', logError.bind(null, 'unhandledRejection'))
 
-  const resolveRoutes = getResolveRoutes(
+  const resolveRoutes = await getResolveRoutes(
     fsChecker,
     config,
     opts,
