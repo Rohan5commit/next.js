@@ -151,7 +151,7 @@ export function formatIssue(issue: Issue) {
           },
         },
         { forceColor: true }
-      ).trim() + '\n\n'
+      ).trimEnd() + '\n\n'
   }
 
   if (description) {
