@@ -13,12 +13,16 @@ describe('app dir - workers', () => {
   }
 
   function beforePageLoad(page: Page) {
+    const regex = new RegExp(
+      `^[^?]+\\?(v=\\d+&)?dpl=${next.immutableAssetToken}$`
+    )
+
     page.on('request', (request) => {
       const url = request.url()
       // TODO fix deployment id for webpack
       if (isTurbopack) {
         if (url.includes('/_next/') && !url.includes('wasm')) {
-          expect(url).toMatch(/^[^?]+\?(v=\d+&)?dpl=test-deployment-id$/)
+          expect(url).toMatch(regex)
         }
       }
     })
@@ -78,7 +82,7 @@ describe('app dir - workers', () => {
     const mainDeploymentId = await browser
       .elementByCss('#main-deployment-id')
       .text()
-    expect(mainDeploymentId).toBe('test-deployment-id')
+    expect(mainDeploymentId).toBe(next.deploymentId)
 
     // Initial worker state should be default
     expect(await browser.elementByCss('#worker-deployment-id').text()).toBe(
@@ -93,7 +97,7 @@ describe('app dir - workers', () => {
       const workerDeploymentId = await browser
         .elementByCss('#worker-deployment-id')
         .text()
-      expect(workerDeploymentId).toBe('test-deployment-id')
+      expect(workerDeploymentId).toBe(next.deploymentId)
     })
   })
 

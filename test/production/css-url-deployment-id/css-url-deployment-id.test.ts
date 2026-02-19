@@ -26,7 +26,7 @@ describe('css-url-deployment-id', () => {
     // Fetch all CSS files and collect their contents
     let allCssContent = ''
     for (const cssUrl of cssUrls) {
-      const res = await next.fetch(cssUrl.split('?')[0])
+      const res = await next.fetch(cssUrl)
       const cssText = await res.text()
       allCssContent += cssText + '\n'
     }
@@ -75,7 +75,7 @@ describe('css-url-deployment-id', () => {
 
     let allCssContent = ''
     for (const cssUrl of cssUrls) {
-      const res = await next.fetch(cssUrl.split('?')[0])
+      const res = await next.fetch(cssUrl)
       const cssText = await res.text()
       allCssContent += cssText + '\n'
     }
@@ -93,6 +93,7 @@ describe('css-url-deployment-id', () => {
 
     // Find image references from CSS modules (page.module.css)
     const imageUrls = allCssContent.match(/url\([^)]+\.png[^)]*\)/g) || []
+
     expect(imageUrls.length).toBeGreaterThanOrEqual(1)
 
     for (const imageUrl of imageUrls) {

@@ -1320,6 +1320,7 @@ function runTests({ dev }) {
              },
            },
          ],
+         "deploymentId": "test-deployment-id",
          "dynamicRoutes": [
            {
              "namedRegex": "^/b/(?<nxtP123>[^/]+?)(?:/)?$",
@@ -1463,7 +1464,35 @@ function runTests({ dev }) {
            },
          ],
          "headers": [],
-         "onMatchHeaders": [],
+         "onMatchHeaders": [
+           {
+             "has": [
+               {
+                 "key": "rsc",
+                 "type": "header",
+                 "value": "1",
+               },
+             ],
+             "headers": [
+               {
+                 "key": "x-nextjs-deployment-id",
+                 "value": "test-deployment-id",
+               },
+             ],
+             "regex": "^(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))?(?:/)?$",
+             "source": "/:path*",
+           },
+           {
+             "headers": [
+               {
+                 "key": "x-nextjs-deployment-id",
+                 "value": "test-deployment-id",
+               },
+             ],
+             "regex": "^/_next/data(?:/(.*))(?:/)?$",
+             "source": "/_next/data/(.*)",
+           },
+         ],
          "pages404": true,
          "redirects": [
            {
@@ -1582,8 +1611,6 @@ function runTests({ dev }) {
   }
 }
 
-const nextConfig = join(appDir, 'next.config.js')
-
 describe('Dynamic Routing', () => {
   if (process.env.__MIDDLEWARE_TEST) {
     const middlewarePath = join(__dirname, '../middleware.js')
@@ -1606,8 +1633,6 @@ describe('Dynamic Routing', () => {
     'development mode',
     () => {
       beforeAll(async () => {
-        await fs.remove(nextConfig)
-
         appPort = await findPort()
         app = await launchApp(appDir, appPort)
         buildId = 'development'
@@ -1621,8 +1646,6 @@ describe('Dynamic Routing', () => {
     'production mode',
     () => {
       beforeAll(async () => {
-        await fs.remove(nextConfig)
-
         await nextBuild(appDir)
         buildId = await fs.readFile(buildIdPath, 'utf8')
 

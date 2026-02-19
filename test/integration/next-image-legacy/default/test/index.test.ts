@@ -15,6 +15,7 @@ import {
   nextStart,
   renderViaHTTP,
   waitFor,
+  getDeploymentId,
 } from 'next-test-utils'
 import webdriver from 'next-webdriver'
 import { join } from 'path'
@@ -68,7 +69,7 @@ function getRatio(width, height) {
   return height / width
 }
 
-function runTests(mode) {
+function runTests(mode: 'dev' | 'server') {
   it('should load the images', async () => {
     let browser
     try {
@@ -1439,15 +1440,21 @@ function runTests(mode) {
       }, /result-correct/)
 
       const imageUrls = await getImageUrls(browser)
+      const query =
+        mode === 'server'
+          ? getDeploymentId(appDir).getDeploymentIdQuery(true)
+          : ''
       expect(imageUrls).toContain(
-        `http://localhost:${appPort}/_next/image?url=%2Ftest.jpg&w=828&q=75`
+        `http://localhost:${appPort}/_next/image?url=%2Ftest.jpg&w=828&q=75${query}`
       )
       expect(imageUrls).toContain(
-        `http://localhost:${appPort}/_next/image?url=%2Ftest.png&w=828&q=75`
+        `http://localhost:${appPort}/_next/image?url=%2Ftest.png&w=828&q=75${query}`
       )
-      expect(imageUrls).toContain(`http://localhost:${appPort}/test.svg`)
       expect(imageUrls).toContain(
-        `http://localhost:${appPort}/_next/image?url=%2Ftest.webp&w=828&q=75`
+        `http://localhost:${appPort}/test.svg${query}`
+      )
+      expect(imageUrls).toContain(
+        `http://localhost:${appPort}/_next/image?url=%2Ftest.webp&w=828&q=75${query}`
       )
     } finally {
       if (browser) {

@@ -2,10 +2,21 @@ import httpProxy from 'http-proxy'
 
 export default async function handler(req, res) {
   const port = req.headers.host.split(':').pop()
+  console.log(
+    `http://127.0.0.1:${port}/${
+      req.query.buildId
+        ? process.env.NEXT_DEPLOYMENT_ID
+          ? `_next/static/_ssgManifest.js?dpl=${process.env.NEXT_DEPLOYMENT_ID}`
+          : `_next/static/${req.query.buildId}/_ssgManifest.js`
+        : `user`
+    }`
+  )
   const proxy = httpProxy.createProxy({
     target: `http://127.0.0.1:${port}/${
       req.query.buildId
-        ? `_next/static/${req.query.buildId}/_ssgManifest.js`
+        ? process.env.NEXT_DEPLOYMENT_ID
+          ? `_next/static/_ssgManifest.js?dpl=${process.env.NEXT_DEPLOYMENT_ID}`
+          : `_next/static/${req.query.buildId}/_ssgManifest.js`
         : `user`
     }`,
     ignorePath: true,

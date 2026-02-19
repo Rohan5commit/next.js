@@ -30,9 +30,12 @@ describe('chunk-load-failure', () => {
     let pageError: Error | undefined
     const browser = await next.browser('/dynamic', {
       beforePageLoad(page) {
-        page.route('**/' + nextDynamicChunk, async (route) => {
-          await route.abort('connectionreset')
-        })
+        page.route(
+          '**/' + nextDynamicChunk + next.assetQuery,
+          async (route) => {
+            await route.abort('connectionreset')
+          }
+        )
         page.on('pageerror', (error: Error) => {
           pageError = error
         })
