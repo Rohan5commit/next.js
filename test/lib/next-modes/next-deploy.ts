@@ -10,6 +10,7 @@ export class NextDeployInstance extends NextInstance {
   private _cliOutput: string
   private _buildId: string
   private _deploymentId: string | undefined
+  private _immutableAssetToken: string | undefined
   private _writtenHostsLine: string | null = null
 
   protected throwIfUnavailable(): void | never {
@@ -36,6 +37,10 @@ export class NextDeployInstance extends NextInstance {
 
   public get deploymentId() {
     return this._deploymentId
+  }
+
+  public get immutableAssetToken() {
+    return this._immutableAssetToken
   }
 
   private async deployUsingCustomScript(): Promise<{ url: string }> {
@@ -180,9 +185,18 @@ export class NextDeployInstance extends NextInstance {
         )
       }
       this._deploymentId = deploymentId
+      const immutableAssetToken = this._cliOutput
+        .match(/IMMUTABLE_ASSET_TOKEN: (.+)/)?.[1]
+        ?.trim()
+      if (!immutableAssetToken) {
+        throw new Error(
+          `Failed to get immutableAssetToken from logs ${this._cliOutput}`
+        )
+      }
+      this._immutableAssetToken = immutableAssetToken
 
       require('console').log(
-        `Got buildId: ${this._buildId}, deploymentId: ${this._deploymentId}`
+        `Got buildId: ${this._buildId}, deploymentId: ${this._deploymentId}, immutableAssetToken: ${this._immutableAssetToken}`
       )
       return
     }
