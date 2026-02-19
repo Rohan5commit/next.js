@@ -217,6 +217,10 @@ export async function verifyTypeScriptSetup({
 
     let result
     if (typeCheckPreflight) {
+      // Install native bindings so that code frame rendering works in the worker
+      const { installBindings } =
+        require('../build/swc/install-bindings') as typeof import('../build/swc/install-bindings')
+      await installBindings()
       const { runTypeCheck } =
         require('./typescript/runTypeCheck') as typeof import('./typescript/runTypeCheck')
 

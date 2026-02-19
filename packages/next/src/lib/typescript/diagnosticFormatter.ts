@@ -1,4 +1,4 @@
-import { renderCodeFrameIfNativeBindingsAvailable } from '../../shared/lib/errors/optional-code-frame'
+import { renderCodeFrame } from '../../shared/lib/errors/code-frame'
 import { bold, cyan, red, yellow } from '../picocolors'
 import path from 'path'
 
@@ -373,7 +373,7 @@ export function getFormattedDiagnostic(
       '\n' +
       message
 
-    const codeFrame = renderCodeFrameIfNativeBindingsAvailable(
+    const codeFrame = renderCodeFrame(
       diagnostic.file.getFullText(diagnostic.file.getSourceFile()),
       {
         start: { line: line, column: character },
