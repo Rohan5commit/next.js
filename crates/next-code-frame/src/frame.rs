@@ -257,6 +257,10 @@ pub fn render_code_frame(
         ColorScheme::plain()
     };
     let mut output = String::new();
+    // Track whether we need a newline before the next section.
+    // By prepending newlines instead of appending them we avoid a
+    // trailing newline that callers would have to strip.
+    let mut needs_newline = false;
 
     // Add message if provided and no column specified
     if let Some(ref message) = options.message
@@ -266,7 +270,7 @@ pub fn render_code_frame(
         output.push_str(color_scheme.marker);
         output.push_str(message);
         output.push_str(color_scheme.reset);
-        output.push('\n');
+        needs_newline = true;
     }
 
     // Render each line
@@ -297,6 +301,12 @@ pub fn render_code_frame(
             truncation.visible_content
         };
 
+        // Separate from previous line/section
+        if needs_newline {
+            output.push('\n');
+        }
+        needs_newline = true;
+
         // Line prefix with number
         if is_error_line {
             output.push_str(color_scheme.marker);
@@ -318,7 +328,6 @@ pub fn render_code_frame(
             output.push(' ');
             output.push_str(&visible_content);
         }
-        output.push('\n');
 
         // Add marker line if this is an error line with column info
         if is_error_line && let Some(start_col) = start_column {
@@ -333,6 +342,7 @@ pub fn render_code_frame(
                 available_code_width,
             );
 
+            output.push('\n');
             output.push(' ');
             output.push(' ');
             output.push_str(color_scheme.gutter);
@@ -353,8 +363,6 @@ pub fn render_code_frame(
                 output.push_str(message);
                 output.push_str(color_scheme.reset);
             }
-
-            output.push('\n');
         }
     }
 

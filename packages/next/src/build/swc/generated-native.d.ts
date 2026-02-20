@@ -49,9 +49,9 @@ export interface NapiCodeFrameOptions {
   linesBelow?: number
   /** Maximum width of the output (default: terminal width) */
   maxWidth?: number
-  /** Whether to use ANSI colors (default: true) */
+  /** Whether to use ANSI colors (default: false) */
   forceColor?: boolean
-  /** Whether to highlight code syntax (default: true) */
+  /** Whether to highlight code syntax (default: follows forceColor) */
   highlightCode?: boolean
   /** Optional message to display with the code frame */
   message?: string
