@@ -852,9 +852,10 @@ export function createStaticWorker(
             }
           : undefined),
         // worker.ts copies this value into globalThis.NEXT_CLIENT_ASSET_SUFFIX
-        __NEXT_PRERENDER_CLIENT_ASSET_SUFFIX: config.deploymentId
-          ? `?dpl=${config.deploymentId}`
-          : '',
+        __NEXT_PRERENDER_CLIENT_ASSET_SUFFIX:
+          config.experimental.immutableAssetToken || config.deploymentId
+            ? `?dpl=${config.experimental.immutableAssetToken || config.deploymentId}`
+            : '',
       },
     },
   }) as StaticWorker
@@ -2077,6 +2078,7 @@ export default async function build(
               cacheLifeProfiles: config.cacheLife,
               buildId,
               deploymentId: config.deploymentId,
+              immutableAssetToken: config.experimental.immutableAssetToken,
               sriEnabled,
               cacheMaxMemorySize: config.cacheMaxMemorySize,
             })
@@ -2300,6 +2302,8 @@ export default async function build(
                             cacheLifeProfiles: config.cacheLife,
                             buildId,
                             deploymentId: config.deploymentId,
+                            immutableAssetToken:
+                              config.experimental.immutableAssetToken,
                             sriEnabled,
                           })
                         }
