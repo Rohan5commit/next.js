@@ -920,22 +920,6 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
             })
             .collect::<Vec<_>>();
 
-        let mut used_key_hashes = [(); FAMILIES].map(|_| Vec::new());
-
-        {
-            for &(family, ..) in merge_jobs.iter() {
-                used_key_hashes[family].extend(
-                    meta_files
-                        .iter()
-                        .filter(|m| m.family() == family as u32)
-                        .filter_map(|meta_file| {
-                            meta_file.deserialize_used_key_hashes_amqf().transpose()
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                );
-            }
-        }
-
         let result = self
             .parallel_scheduler
             .parallel_map_collect_owned::<_, _, Result<Vec<_>>>(
@@ -952,6 +936,16 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
                             keys_written: 0,
                         });
                     }
+
+                    // Deserialize used key hash filters per-family so they are
+                    // freed when this family's merge work completes.
+                    let used_key_hashes: Vec<qfilter::Filter> = meta_files
+                        .iter()
+                        .filter(|m| m.family() == family)
+                        .filter_map(|meta_file| {
+                            meta_file.deserialize_used_key_hashes_amqf().transpose()
+                        })
+                        .collect::<Result<Vec<_>>>()?;
 
                     // Later we will remove the merged files
                     let sst_seq_numbers_to_delete = merge_jobs
@@ -1078,10 +1072,9 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
                                     // Remove duplicates
                                     if let Some(current) = current.take() {
                                         if current.key != entry.key {
-                                            let is_used =
-                                                used_key_hashes[family as usize].iter().any(
-                                                    |amqf| amqf.contains_fingerprint(current.hash),
-                                                );
+                                            let is_used = used_key_hashes.iter().any(|amqf| {
+                                                amqf.contains_fingerprint(current.hash)
+                                            });
                                             let collector = if is_used {
                                                 &mut used_collector
                                             } else {
@@ -1141,6 +1134,36 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
                                             }
 
                                             collector.entries.push(current);
+
+                                            // Early flush: once entries is past 50%
+                                            // of any limit, the final file won't be
+                                            // undersized, so flush last_entries to
+                                            // reduce peak memory.
+                                            if !collector.last_entries.is_empty()
+                                                && (collector.total_key_size
+                                                    + collector.total_value_size
+                                                    > DATA_THRESHOLD_PER_COMPACTED_FILE / 2
+                                                    || collector.entries.len()
+                                                        >= MAX_ENTRIES_PER_COMPACTED_FILE / 2
+                                                    || collector.value_block_tracker.is_half_full())
+                                            {
+                                                let seq = sequence_number
+                                                    .fetch_add(1, Ordering::SeqCst)
+                                                    + 1;
+                                                keys_written += collector.last_entries.len() as u64;
+                                                let mut flags = MetaEntryFlags::default();
+                                                flags.set_cold(!is_used);
+                                                collector.new_sst_files.push(create_sst_file(
+                                                    &self.parallel_scheduler,
+                                                    &collector.last_entries,
+                                                    collector.last_entries_total_key_size,
+                                                    path,
+                                                    seq,
+                                                    flags,
+                                                )?);
+                                                collector.last_entries.clear();
+                                                collector.last_entries_total_key_size = 0;
+                                            }
                                         } else {
                                             // Override value
                                             // TODO delete blob file
@@ -1149,7 +1172,7 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
                                     current = Some(entry);
                                 }
                                 if let Some(entry) = current {
-                                    let is_used = used_key_hashes[family as usize]
+                                    let is_used = used_key_hashes
                                         .iter()
                                         .any(|amqf| amqf.contains_fingerprint(entry.hash));
                                     let collector = if is_used {
