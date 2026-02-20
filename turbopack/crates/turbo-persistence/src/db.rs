@@ -35,7 +35,7 @@ use crate::{
     meta_file_builder::MetaFileBuilder,
     parallel_scheduler::ParallelScheduler,
     sst_filter::SstFilter,
-    static_sorted_file::{BlockCache, SstLookupResult},
+    static_sorted_file::{BlockCache, SstLookupResult, StaticSortedFile},
     static_sorted_file_builder::{StaticSortedFileBuilderMeta, write_static_stored_file},
     value_block_count_tracker::ValueBlockCountTracker,
     write_batch::{FinishResult, WriteBatch},
@@ -780,6 +780,12 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
             );
         }
 
+        // Free block caches and SST mmaps before compaction. The block caches
+        // are not used during compaction (we iterate uncached), and any cached
+        // SST mmaps would use MADV_RANDOM which is wrong for sequential scans.
+        // Clearing them upfront frees memory for the merge work.
+        self.clear_cache();
+
         let mut sequence_number;
         let mut new_meta_files = Vec::new();
         let mut new_sst_files = Vec::new();
@@ -887,8 +893,6 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
             sst_by_family[sst.range.family as usize].push(sst);
         }
 
-        let key_block_cache = &self.key_block_cache;
-        let value_block_cache = &self.value_block_cache;
         let path = &self.path;
 
         let log_mutex = Mutex::new(());
@@ -1024,17 +1028,25 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
                                     Ok((seq, file, meta))
                                 }
 
-                                // Iterate all SST files
-                                let iters = indicies
+                                // Open SST files independently for compaction.
+                                // Uses MADV_SEQUENTIAL for better OS page management
+                                // and avoids caching mmaps on MetaEntry's OnceLock.
+                                let ssts = indicies
                                     .iter()
                                     .map(|&index| {
                                         let meta_index = ssts_with_ranges[index].meta_index;
                                         let index_in_meta = ssts_with_ranges[index].index_in_meta;
-                                        let meta = &meta_files[meta_index];
-                                        meta.entry(index_in_meta)
-                                            .sst(meta)?
-                                            .iter(key_block_cache, value_block_cache)
+                                        let entry = meta_files[meta_index].entry(index_in_meta);
+                                        StaticSortedFile::open_for_compaction(
+                                            path,
+                                            entry.sst_metadata(),
+                                        )
                                     })
+                                    .collect::<Result<Vec<_>>>()?;
+
+                                let iters = ssts
+                                    .iter()
+                                    .map(|sst| sst.iter())
                                     .collect::<Result<Vec<_>>>()?;
 
                                 let iter = MergeIter::new(iters.into_iter())?;

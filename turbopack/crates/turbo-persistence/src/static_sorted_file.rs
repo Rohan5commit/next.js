@@ -72,7 +72,7 @@ impl quick_cache::Weighter<(u32, u16), ArcBytes> for BlockWeighter {
 pub type BlockCache =
     quick_cache::sync::Cache<(u32, u16), ArcBytes, BlockWeighter, BuildHasherDefault<FxHasher>>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct StaticSortedFileMetaData {
     /// The sequence number of this file.
     pub sequence_number: u32,
@@ -116,16 +116,31 @@ impl StaticSortedFile {
     pub fn open(db_path: &Path, meta: StaticSortedFileMetaData) -> Result<Self> {
         let filename = format!("{:08}.sst", meta.sequence_number);
         let path = db_path.join(&filename);
-        Self::open_internal(path, meta)
+        Self::open_internal(path, meta, false)
             .with_context(|| format!("Unable to open static sorted file {filename}"))
     }
 
-    fn open_internal(path: PathBuf, meta: StaticSortedFileMetaData) -> Result<Self> {
+    /// Opens an SST file for compaction. Uses MADV_SEQUENTIAL instead of MADV_RANDOM,
+    /// since compaction reads blocks sequentially and benefits from OS read-ahead
+    /// and page reclamation.
+    pub fn open_for_compaction(db_path: &Path, meta: StaticSortedFileMetaData) -> Result<Self> {
+        let filename = format!("{:08}.sst", meta.sequence_number);
+        let path = db_path.join(&filename);
+        Self::open_internal(path, meta, true)
+            .with_context(|| format!("Unable to open static sorted file {filename}"))
+    }
+
+    fn open_internal(
+        path: PathBuf,
+        meta: StaticSortedFileMetaData,
+        sequential: bool,
+    ) -> Result<Self> {
         let mmap = unsafe { Mmap::map(&File::open(&path)?)? };
         #[cfg(unix)]
-        mmap.advise(memmap2::Advice::Random)?;
-        #[cfg(unix)]
-        {
+        if sequential {
+            mmap.advise(memmap2::Advice::Sequential)?;
+        } else {
+            mmap.advise(memmap2::Advice::Random)?;
             let offset = meta.block_offsets_start(mmap.len());
             let _ = mmap.advise_range(memmap2::Advice::Sequential, offset, mmap.len() - offset);
         }
@@ -137,15 +152,9 @@ impl StaticSortedFile {
     }
 
     /// Iterate over all entries in this file in sorted order.
-    pub fn iter<'l>(
-        &'l self,
-        key_block_cache: &'l BlockCache,
-        value_block_cache: &'l BlockCache,
-    ) -> Result<StaticSortedFileIter<'l>> {
+    pub fn iter(&self) -> Result<StaticSortedFileIter<'_>> {
         let mut iter = StaticSortedFileIter {
             this: self,
-            key_block_cache,
-            value_block_cache,
             stack: Vec::new(),
             current_key_block: None,
         };
@@ -266,7 +275,7 @@ impl StaticSortedFile {
                 }
                 Ordering::Equal => {
                     return Ok(self
-                        .handle_key_match(ty, mid_val, &block, value_block_cache)?
+                        .handle_key_match(ty, mid_val, &block, Some(value_block_cache))?
                         .into());
                 }
                 Ordering::Greater => {
@@ -283,16 +292,19 @@ impl StaticSortedFile {
         ty: u8,
         mut val: &[u8],
         key_block_arc: &ArcBytes,
-        value_block_cache: &BlockCache,
+        value_block_cache: Option<&BlockCache>,
     ) -> Result<LookupValue> {
         Ok(match ty {
             KEY_BLOCK_ENTRY_TYPE_SMALL => {
                 let block = val.read_u16::<BE>()?;
                 let size = val.read_u16::<BE>()? as usize;
                 let position = val.read_u32::<BE>()? as usize;
-                let value = self
-                    .get_value_block(block, value_block_cache)?
-                    .slice(position..position + size);
+                let value = if let Some(cache) = value_block_cache {
+                    self.get_value_block(block, cache)?
+                } else {
+                    self.read_small_value_block(block)?
+                }
+                .slice(position..position + size);
                 LookupValue::Slice { value }
             }
             KEY_BLOCK_ENTRY_TYPE_MEDIUM => {
@@ -459,8 +471,6 @@ impl StaticSortedFile {
 /// An iterator over all entries in a SST file in sorted order.
 pub struct StaticSortedFileIter<'l> {
     this: &'l StaticSortedFile,
-    key_block_cache: &'l BlockCache,
-    value_block_cache: &'l BlockCache,
 
     stack: Vec<CurrentIndexBlock>,
     current_key_block: Option<CurrentKeyBlock>,
@@ -491,7 +501,7 @@ impl<'l> Iterator for StaticSortedFileIter<'l> {
 impl<'l> StaticSortedFileIter<'l> {
     /// Enters a block at the given index.
     fn enter_block(&mut self, block_index: u16) -> Result<()> {
-        let block_arc = self.this.get_key_block(block_index, self.key_block_cache)?;
+        let block_arc = self.this.read_key_block(block_index)?;
         let mut block = &*block_arc;
         let block_type = block.read_u8()?;
         match block_type {
@@ -555,9 +565,7 @@ impl<'l> StaticSortedFileIter<'l> {
                         block,
                     }
                 } else {
-                    let value =
-                        self.this
-                            .handle_key_match(ty, val, &entries, self.value_block_cache)?;
+                    let value = self.this.handle_key_match(ty, val, &entries, None)?;
                     LazyLookupValue::Eager(value)
                 };
                 let entry = LookupEntry {
