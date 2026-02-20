@@ -1,8 +1,6 @@
 import { nextTestSetup } from 'e2e-utils'
 
 describe('css-url-deployment-id', () => {
-  const deploymentId = 'test-deployment-id'
-
   const { next } = nextTestSetup({
     files: __dirname,
     skipDeployment: true,
@@ -57,7 +55,7 @@ describe('css-url-deployment-id', () => {
     expect(assetUrls.length).toBeGreaterThanOrEqual(1)
 
     for (const assetUrl of assetUrls) {
-      expect(assetUrl).toContain('dpl=' + deploymentId)
+      expect(assetUrl).toContain('dpl=' + next.immutableAssetToken)
     }
   })
 
@@ -98,7 +96,7 @@ describe('css-url-deployment-id', () => {
     expect(imageUrls.length).toBeGreaterThanOrEqual(1)
 
     for (const imageUrl of imageUrls) {
-      expect(imageUrl).toContain('dpl=' + deploymentId)
+      expect(imageUrl).toContain('dpl=' + next.immutableAssetToken)
     }
 
     // Find font references from CSS modules
@@ -106,7 +104,7 @@ describe('css-url-deployment-id', () => {
     expect(fontUrls.length).toBeGreaterThanOrEqual(1)
 
     for (const fontUrl of fontUrls) {
-      expect(fontUrl).toContain('dpl=' + deploymentId)
+      expect(fontUrl).toContain('dpl=' + next.immutableAssetToken)
     }
   })
 })
