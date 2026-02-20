@@ -548,7 +548,7 @@ async function generateDynamicRSCPayload(
       tree: loaderTree,
       parsedQuery: query,
       pathname: url.pathname,
-      metadataContext: createMetadataContext(ctx.renderOpts),
+      metadataContext: createMetadataContext(),
       interpolatedParams: ctx.interpolatedParams,
       serveStreamingMetadata,
     })
@@ -1441,7 +1441,7 @@ async function getRSCPayload(
     errorType: is404 && !hasGlobalNotFound ? 'not-found' : undefined,
     parsedQuery: query,
     pathname: url.pathname,
-    metadataContext: createMetadataContext(ctx.renderOpts),
+    metadataContext: createMetadataContext(),
     interpolatedParams: ctx.interpolatedParams,
     serveStreamingMetadata,
   })
@@ -1560,7 +1560,7 @@ async function getErrorRSCPayload(
     tree,
     parsedQuery: query,
     pathname: url.pathname,
-    metadataContext: createMetadataContext(ctx.renderOpts),
+    metadataContext: createMetadataContext(),
     errorType,
     interpolatedParams: ctx.interpolatedParams,
     serveStreamingMetadata: serveStreamingMetadata,
