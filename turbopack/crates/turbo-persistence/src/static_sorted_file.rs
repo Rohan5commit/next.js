@@ -72,6 +72,34 @@ impl quick_cache::Weighter<(u32, u16), ArcBytes> for BlockWeighter {
 pub type BlockCache =
     quick_cache::sync::Cache<(u32, u16), ArcBytes, BlockWeighter, BuildHasherDefault<FxHasher>>;
 
+/// Trait abstracting value block caching for `handle_key_match`.
+///
+/// Implemented by `&BlockCache` (global shared cache for lookups) and
+/// `&mut Option<(u16, ArcBytes)>` (lightweight single-entry cache for
+/// sequential iteration).
+trait ValueBlockCache {
+    fn get_or_read(self, sst: &StaticSortedFile, block_index: u16) -> Result<ArcBytes>;
+}
+
+impl ValueBlockCache for &BlockCache {
+    fn get_or_read(self, sst: &StaticSortedFile, block_index: u16) -> Result<ArcBytes> {
+        sst.get_value_block(block_index, self)
+    }
+}
+
+impl ValueBlockCache for &mut Option<(u16, ArcBytes)> {
+    fn get_or_read(self, sst: &StaticSortedFile, block_index: u16) -> Result<ArcBytes> {
+        if let Some((idx, block)) = self.as_ref()
+            && *idx == block_index
+        {
+            return Ok(block.clone());
+        }
+        let block = sst.read_small_value_block(block_index)?;
+        *self = Some((block_index, block.clone()));
+        Ok(block)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct StaticSortedFileMetaData {
     /// The sequence number of this file.
@@ -160,6 +188,7 @@ impl StaticSortedFile {
             this: self,
             stack: Vec::new(),
             current_key_block: None,
+            value_block_cache: None,
         };
         iter.enter_block(block_count - 1)?;
         Ok(iter)
@@ -278,7 +307,7 @@ impl StaticSortedFile {
                 }
                 Ordering::Equal => {
                     return Ok(self
-                        .handle_key_match(ty, mid_val, &block, Some(value_block_cache))?
+                        .handle_key_match(ty, mid_val, &block, value_block_cache)?
                         .into());
                 }
                 Ordering::Greater => {
@@ -295,19 +324,16 @@ impl StaticSortedFile {
         ty: u8,
         mut val: &[u8],
         key_block_arc: &ArcBytes,
-        value_block_cache: Option<&BlockCache>,
+        value_block_cache: impl ValueBlockCache,
     ) -> Result<LookupValue> {
         Ok(match ty {
             KEY_BLOCK_ENTRY_TYPE_SMALL => {
                 let block = val.read_u16::<BE>()?;
                 let size = val.read_u16::<BE>()? as usize;
                 let position = val.read_u32::<BE>()? as usize;
-                let value = if let Some(cache) = value_block_cache {
-                    self.get_value_block(block, cache)?
-                } else {
-                    self.read_small_value_block(block)?
-                }
-                .slice(position..position + size);
+                let value = value_block_cache
+                    .get_or_read(self, block)?
+                    .slice(position..position + size);
                 LookupValue::Slice { value }
             }
             KEY_BLOCK_ENTRY_TYPE_MEDIUM => {
@@ -481,6 +507,10 @@ pub struct StaticSortedFileIter {
 
     stack: Vec<CurrentIndexBlock>,
     current_key_block: Option<CurrentKeyBlock>,
+    /// Single-entry value block cache. Within a key block, entries reference
+    /// value blocks sequentially and don't revisit earlier blocks, so caching
+    /// just the current one avoids redundant decompression.
+    value_block_cache: Option<(u16, ArcBytes)>,
 }
 
 struct CurrentKeyBlock {
@@ -572,7 +602,12 @@ impl StaticSortedFileIter {
                         block,
                     }
                 } else {
-                    let value = self.this.handle_key_match(ty, val, &entries, None)?;
+                    let value = self.this.handle_key_match(
+                        ty,
+                        val,
+                        &entries,
+                        &mut self.value_block_cache,
+                    )?;
                     LazyLookupValue::Eager(value)
                 };
                 let entry = LookupEntry {
