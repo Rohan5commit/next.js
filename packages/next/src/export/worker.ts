@@ -11,6 +11,8 @@ import type { AppPageModule } from '../server/route-modules/app-page/module'
 import type { PagesModule } from '../server/route-modules/pages/module.compiled'
 
 import '../server/node-environment'
+import { installCodeFrameSupport } from '../server/lib/install-code-frame'
+installCodeFrameSupport()
 
 process.env.NEXT_IS_EXPORT_WORKER = 'true'
 
