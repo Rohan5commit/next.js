@@ -7,6 +7,7 @@ import type {
   FlightRouterState,
   CacheNodeSeedData,
   RSCPayload,
+  NavigationFlightResponse,
   FlightData,
   InitialRSCPayload,
   FlightDataPath,
@@ -298,14 +299,9 @@ function maybeAppendBuildIdToRSCPayload<T extends RSCPayload>(
   if (!ctx.sharedContext.deploymentId) {
     // When using the build id, we need to initialize the id on initial page load, so a build id
     // header wouldn't be enough.
-    return {
-      ...payload,
-      b: ctx.sharedContext.buildId,
-    }
-  } else {
-    // We rely on a response header
-    return payload
+    payload.b = ctx.sharedContext.buildId
   }
+  return payload
 }
 
 interface ParseRequestHeadersOptions {
@@ -504,6 +500,7 @@ async function generateDynamicRSCPayload(
     actionResult?: ActionResult
     skipPageRendering?: boolean
     staleTimeIterable?: AsyncIterable<number>
+    staticStageByteLengthPromise?: Promise<number>
   }
 ): Promise<RSCPayload> {
   // Flight data that is going to be passed to the browser.
@@ -617,19 +614,23 @@ async function generateDynamicRSCPayload(
   }
 
   // Otherwise, it's a regular RSC response.
-  const baseResponse = maybeAppendBuildIdToRSCPayload(ctx, {
-    f: flightData,
-    q: getRenderedSearch(query),
-    i: !!couldBeIntercepted,
-    S: workStore.isStaticGeneration,
-    h: getMetadataVaryParamsThenable(),
-  })
+  const baseResponse: NavigationFlightResponse = maybeAppendBuildIdToRSCPayload(
+    ctx,
+    {
+      f: flightData,
+      q: getRenderedSearch(query),
+      i: !!couldBeIntercepted,
+      S: workStore.isStaticGeneration,
+      h: getMetadataVaryParamsThenable(),
+    }
+  )
 
   if (options?.staleTimeIterable !== undefined) {
-    return {
-      ...baseResponse,
-      s: options.staleTimeIterable,
-    }
+    baseResponse.s = options.staleTimeIterable
+  }
+
+  if (options?.staticStageByteLengthPromise !== undefined) {
+    baseResponse.l = options.staticStageByteLengthPromise
   }
 
   return baseResponse
@@ -733,6 +734,107 @@ async function generateDynamicFlightRenderResult(
   )
 }
 
+/**
+ * Production-only staged dynamic flight render for cache components. Uses
+ * staged rendering to separate static (RDC-backed) from runtime/dynamic
+ * content.
+ */
+async function generateStagedDynamicFlightRenderResult(
+  req: BaseNextRequest,
+  ctx: AppRenderContext,
+  requestStore: RequestStore
+): Promise<RenderResult> {
+  const { componentMod, workStore, renderOpts } = ctx
+  const { renderToReadableStream } = componentMod
+  const { onInstrumentationRequestError, experimental } = renderOpts
+
+  function onFlightDataRenderError(err: DigestedError, silenceLog: boolean) {
+    return onInstrumentationRequestError?.(
+      err,
+      req,
+      createErrorContext(ctx, 'react-server-components-payload'),
+      silenceLog
+    )
+  }
+
+  const onError = createReactServerErrorHandler(
+    false,
+    false,
+    workStore.reactServerErrorsByDigest,
+    onFlightDataRenderError
+  )
+
+  const selectStaleTime = createSelectStaleTime(experimental)
+  const staleTimeIterable = new StaleTimeIterable()
+
+  const stageController = new StagedRenderingController()
+
+  // Initialize stale time tracking on the request store.
+  requestStore.stale = INFINITE_CACHE
+  requestStore.stagedRendering = stageController
+  requestStore.asyncApiPromises = createAsyncApiPromisesInDev(
+    stageController,
+    requestStore.cookies,
+    requestStore.mutableCookies,
+    requestStore.headers
+  )
+
+  trackStaleTime(
+    requestStore as { stale: number },
+    staleTimeIterable,
+    selectStaleTime
+  )
+
+  // Deferred promise for the static stage byte length. Flight serializes the
+  // resolved value into the stream so the client knows where the static
+  // prefix ends.
+  let resolveStaticStageByteLength: (count: number) => void
+  const staticStageByteLengthPromise = new Promise<number>((resolve) => {
+    resolveStaticStageByteLength = resolve
+  })
+
+  const rscPayload = await workUnitAsyncStorage.run(
+    requestStore,
+    generateDynamicRSCPayload,
+    ctx,
+    { staleTimeIterable, staticStageByteLengthPromise }
+  )
+
+  const { clientModules } = getClientReferenceManifest()
+
+  const flightReadableStream = await runInSequentialTasks(
+    () => {
+      stageController.advanceStage(RenderStage.Static)
+
+      const stream = workUnitAsyncStorage.run(
+        requestStore,
+        renderToReadableStream,
+        rscPayload,
+        clientModules,
+        { onError, filterStackFrame }
+      )
+
+      const [dynamicStream, staticStream] = stream.tee()
+
+      countStaticStageBytes(staticStream, stageController).then(
+        resolveStaticStageByteLength
+      )
+
+      return dynamicStream
+    },
+    () => {
+      finishStaleTimeTracking(staleTimeIterable)
+    },
+    () => {
+      stageController.advanceStage(RenderStage.Dynamic)
+    }
+  )
+
+  return new FlightRenderResult(flightReadableStream, {
+    fetchMetrics: workStore.fetchMetrics,
+  })
+}
+
 type RenderToReadableStreamServerOptions = NonNullable<
   Parameters<
     (typeof import('react-server-dom-webpack/server.node'))['renderToReadableStream']
@@ -817,7 +919,7 @@ async function generateDynamicFlightRenderResultWithStagesInDev(
   ctx: AppRenderContext,
   initialRequestStore: RequestStore,
   createRequestStore: (() => RequestStore) | undefined,
-  devFallbackParams: OpaqueFallbackRouteParams | null
+  fallbackParams: OpaqueFallbackRouteParams | null
 ): Promise<RenderResult> {
   const {
     htmlRequestId,
@@ -940,7 +1042,7 @@ async function generateDynamicFlightRenderResultWithStagesInDev(
         runtimeStageEndTime,
         ctx,
         finalRequestStore,
-        devFallbackParams,
+        fallbackParams,
         validationDebugChannelClient
       )
     }
@@ -2130,7 +2232,7 @@ async function renderToHTMLOrFlightImpl(
       null
 
     const rootParams = getRootParams(loaderTree, ctx.getDynamicParamFromSegment)
-    const devFallbackParams = getRequestMeta(req, 'devFallbackParams') || null
+    const fallbackParams = getRequestMeta(req, 'fallbackParams') || null
 
     const createRequestStore = createRequestStoreForRender.bind(
       null,
@@ -2144,7 +2246,7 @@ async function renderToHTMLOrFlightImpl(
       isHmrRefresh,
       serverComponentsHmrCache,
       renderResumeDataCache,
-      devFallbackParams
+      fallbackParams
     )
     const requestStore = createRequestStore()
 
@@ -2180,8 +2282,10 @@ async function renderToHTMLOrFlightImpl(
             ctx,
             requestStore,
             createRequestStore,
-            devFallbackParams
+            fallbackParams
           )
+        } else if (cacheComponents) {
+          return generateStagedDynamicFlightRenderResult(req, ctx, requestStore)
         } else {
           return generateDynamicFlightRenderResult(req, ctx, requestStore)
         }
@@ -2219,7 +2323,7 @@ async function renderToHTMLOrFlightImpl(
             postponedState,
             metadata,
             undefined, // Prevent restartable-render behavior in dev + Cache Components mode
-            devFallbackParams
+            fallbackParams
           )
 
           return new RenderResult(stream, {
@@ -2261,7 +2365,7 @@ async function renderToHTMLOrFlightImpl(
       // and we currently we don't copy changes over when creating a new store,
       // so the restarted render wouldn't be correct.
       didExecuteServerAction ? undefined : createRequestStore,
-      devFallbackParams
+      fallbackParams
     )
 
     // Invalid dynamic usages should only error the request in development.
@@ -2468,7 +2572,7 @@ async function renderToStream(
   postponedState: PostponedState | null,
   metadata: AppPageRenderResultMetadata,
   createRequestStore: (() => RequestStore) | undefined,
-  devFallbackParams: OpaqueFallbackRouteParams | null
+  fallbackParams: OpaqueFallbackRouteParams | null
 ): Promise<ReadableStream<Uint8Array>> {
   /* eslint-disable @next/internal/no-ambiguous-jsx -- React Client */
   const {
@@ -2706,7 +2810,7 @@ async function renderToStream(
             runtimeStageEndTime,
             ctx,
             finalRequestStore,
-            devFallbackParams,
+            fallbackParams,
             validationDebugChannelClient
           )
 
@@ -3491,6 +3595,29 @@ async function accumulateStreamChunks(
   }
 
   return { staticChunks, runtimeChunks, dynamicChunks }
+}
+
+async function countStaticStageBytes(
+  stream: ReadableStream<Uint8Array>,
+  stageController: StagedRenderingController
+): Promise<number> {
+  let byteLength = 0
+  const reader = stream.getReader()
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+    if (stageController.currentStage <= RenderStage.Static) {
+      byteLength += value.byteLength
+    } else {
+      reader.cancel()
+      break
+    }
+  }
+
+  return byteLength
 }
 
 function createAsyncApiPromisesInDev(
