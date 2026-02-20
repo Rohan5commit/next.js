@@ -1000,9 +1000,9 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
                                     });
                                 }
 
-                                fn create_sst_file<'l, S: ParallelScheduler>(
+                                fn create_sst_file<S: ParallelScheduler>(
                                     parallel_scheduler: &S,
-                                    entries: &[LookupEntry<'l>],
+                                    entries: &[LookupEntry],
                                     total_key_size: usize,
                                     path: &Path,
                                     seq: u32,
@@ -1025,7 +1025,7 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
                                 // Open SST files independently for compaction.
                                 // Uses MADV_SEQUENTIAL for better OS page management
                                 // and avoids caching mmaps on MetaEntry's OnceLock.
-                                let ssts = indicies
+                                let iters = indicies
                                     .iter()
                                     .map(|&index| {
                                         let meta_index = ssts_with_ranges[index].meta_index;
@@ -1034,13 +1034,9 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
                                         StaticSortedFile::open_for_compaction(
                                             path,
                                             entry.sst_metadata(),
-                                        )
+                                        )?
+                                        .try_into_iter()
                                     })
-                                    .collect::<Result<Vec<_>>>()?;
-
-                                let iters = ssts
-                                    .iter()
-                                    .map(|sst| sst.iter())
                                     .collect::<Result<Vec<_>>>()?;
 
                                 let iter = MergeIter::new(iters.into_iter())?;
@@ -1051,15 +1047,15 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
 
                                 let mut keys_written = 0;
 
-                                let mut current: Option<LookupEntry<'_>> = None;
+                                let mut current: Option<LookupEntry> = None;
 
                                 #[derive(Default)]
-                                struct Collector<'l> {
-                                    entries: Vec<LookupEntry<'l>>,
+                                struct Collector {
+                                    entries: Vec<LookupEntry>,
                                     total_key_size: usize,
                                     total_value_size: usize,
                                     value_block_tracker: ValueBlockCountTracker,
-                                    last_entries: Vec<LookupEntry<'l>>,
+                                    last_entries: Vec<LookupEntry>,
                                     last_entries_total_key_size: usize,
                                     new_sst_files:
                                         Vec<(u32, File, StaticSortedFileBuilderMeta<'static>)>,

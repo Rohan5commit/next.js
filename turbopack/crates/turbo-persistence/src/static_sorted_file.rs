@@ -151,14 +151,17 @@ impl StaticSortedFile {
         Ok(file)
     }
 
-    /// Iterate over all entries in this file in sorted order.
-    pub fn iter(&self) -> Result<StaticSortedFileIter<'_>> {
+    /// Consume this file and return an iterator over all entries in sorted order.
+    /// The iterator takes ownership of the SST file, so the mmap and its pages
+    /// are freed when the iterator is dropped.
+    pub fn try_into_iter(self) -> Result<StaticSortedFileIter> {
+        let block_count = self.meta.block_count;
         let mut iter = StaticSortedFileIter {
             this: self,
             stack: Vec::new(),
             current_key_block: None,
         };
-        iter.enter_block(self.meta.block_count - 1)?;
+        iter.enter_block(block_count - 1)?;
         Ok(iter)
     }
 
@@ -393,14 +396,13 @@ impl StaticSortedFile {
     ) -> Result<ArcBytes> {
         let (uncompressed_length, block) = self.get_raw_block(block_index)?;
 
-        // 0 means the block was not compressed, just return the slice into the mmap
+        // 0 means the block was not compressed, return the mmap-backed ArcBytes directly
         if uncompressed_length == 0 {
-            // SAFETY: get_raw_block only returns reference into the mmap.
-            return Ok(unsafe { ArcBytes::from_mmap(self.mmap.clone(), block) });
+            return Ok(block);
         }
         let buffer = decompress_into_arc(
             uncompressed_length,
-            block,
+            &block,
             compression_dictionary,
             long_term,
         )?;
@@ -408,7 +410,9 @@ impl StaticSortedFile {
     }
 
     /// Gets the slice of the compressed block from the memory mapped file.
-    fn get_raw_block(&self, block_index: u16) -> Result<(u32, &[u8])> {
+    /// Returns `(uncompressed_length, block_data)` where `block_data` is an
+    /// `ArcBytes` backed by the mmap.
+    fn get_raw_block(&self, block_index: u16) -> Result<(u32, ArcBytes)> {
         #[cfg(feature = "strict_checks")]
         if block_index >= self.meta.block_count {
             bail!(
@@ -463,14 +467,17 @@ impl StaticSortedFile {
             block_end - block_start,
         );
         let uncompressed_length = (&self.mmap[block_start..block_start + 4]).read_u32::<BE>()?;
-        let block = &self.mmap[block_start + 4..block_end];
+        // SAFETY: block_start + 4..block_end is within the mmap.
+        let block = unsafe {
+            ArcBytes::from_mmap(self.mmap.clone(), &self.mmap[block_start + 4..block_end])
+        };
         Ok((uncompressed_length, block))
     }
 }
 
 /// An iterator over all entries in a SST file in sorted order.
-pub struct StaticSortedFileIter<'l> {
-    this: &'l StaticSortedFile,
+pub struct StaticSortedFileIter {
+    this: StaticSortedFile,
 
     stack: Vec<CurrentIndexBlock>,
     current_key_block: Option<CurrentKeyBlock>,
@@ -490,15 +497,15 @@ struct CurrentIndexBlock {
     index: usize,
 }
 
-impl<'l> Iterator for StaticSortedFileIter<'l> {
-    type Item = Result<LookupEntry<'l>>;
+impl Iterator for StaticSortedFileIter {
+    type Item = Result<LookupEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next_internal().transpose()
     }
 }
 
-impl<'l> StaticSortedFileIter<'l> {
+impl StaticSortedFileIter {
     /// Enters a block at the given index.
     fn enter_block(&mut self, block_index: u16) -> Result<()> {
         let block_arc = self.this.read_key_block(block_index)?;
@@ -538,7 +545,7 @@ impl<'l> StaticSortedFileIter<'l> {
     }
 
     /// Gets the next entry in the file and moves the cursor.
-    fn next_internal(&mut self) -> Result<Option<LookupEntry<'l>>> {
+    fn next_internal(&mut self) -> Result<Option<LookupEntry>> {
         loop {
             if let Some(CurrentKeyBlock {
                 offsets,
