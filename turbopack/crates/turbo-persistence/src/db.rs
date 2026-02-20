@@ -937,15 +937,37 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
                         });
                     }
 
-                    // Deserialize used key hash filters per-family so they are
-                    // freed when this family's merge work completes.
-                    let used_key_hashes: Vec<qfilter::Filter> = meta_files
-                        .iter()
-                        .filter(|m| m.family() == family)
-                        .filter_map(|meta_file| {
-                            meta_file.deserialize_used_key_hashes_amqf().transpose()
-                        })
-                        .collect::<Result<Vec<_>>>()?;
+                    // Deserialize and merge used key hash filters per-family into
+                    // a single filter. This avoids O(entries × N) filter probes
+                    // during the merge loop. Empty filters (from commits with no
+                    // reads) are discarded.
+                    let used_key_hashes: Option<qfilter::Filter> = {
+                        let filters: Vec<qfilter::Filter> = meta_files
+                            .iter()
+                            .filter(|m| m.family() == family)
+                            .filter_map(|meta_file| {
+                                meta_file.deserialize_used_key_hashes_amqf().transpose()
+                            })
+                            .collect::<Result<Vec<_>>>()?
+                            .into_iter()
+                            .filter(|amqf| !amqf.is_empty())
+                            .collect();
+                        let total_len: u64 = filters.iter().map(|f| f.len()).sum();
+                        if total_len == 0 {
+                            None
+                        } else {
+                            let mut merged =
+                                qfilter::Filter::with_fingerprint_size(total_len, u64::BITS as u8)
+                                    .expect("Failed to create merged AMQF filter");
+                            for filter in &filters {
+                                merged
+                                    .merge(false, filter)
+                                    .expect("Failed to merge AMQF filters");
+                            }
+                            merged.shrink_to_fit();
+                            Some(merged)
+                        }
+                    };
 
                     // Later we will remove the merged files
                     let sst_seq_numbers_to_delete = merge_jobs
@@ -1068,9 +1090,10 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
                                     // Remove duplicates
                                     if let Some(current) = current.take() {
                                         if current.key != entry.key {
-                                            let is_used = used_key_hashes.iter().any(|amqf| {
-                                                amqf.contains_fingerprint(current.hash)
-                                            });
+                                            let is_used =
+                                                used_key_hashes.as_ref().is_some_and(|amqf| {
+                                                    amqf.contains_fingerprint(current.hash)
+                                                });
                                             let collector = if is_used {
                                                 &mut used_collector
                                             } else {
@@ -1169,8 +1192,8 @@ impl<S: ParallelScheduler, const FAMILIES: usize> TurboPersistence<S, FAMILIES> 
                                 }
                                 if let Some(entry) = current {
                                     let is_used = used_key_hashes
-                                        .iter()
-                                        .any(|amqf| amqf.contains_fingerprint(entry.hash));
+                                        .as_ref()
+                                        .is_some_and(|amqf| amqf.contains_fingerprint(entry.hash));
                                     let collector = if is_used {
                                         &mut used_collector
                                     } else {
