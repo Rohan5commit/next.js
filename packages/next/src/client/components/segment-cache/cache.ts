@@ -2260,6 +2260,8 @@ export function writeDynamicRenderResponseIntoCache(
 
   const flightDatas = normalizeFlightData(serverData.f)
   if (typeof flightDatas === 'string') {
+    // This means navigating to this route will result in an MPA navigation.
+    // TODO: We should cache this, too, so that the MPA navigation is immediate.
     return null
   }
 
