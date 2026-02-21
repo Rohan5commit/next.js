@@ -979,6 +979,11 @@ function assignDefaultsAndValidate(
     result.deploymentId = process.env.NEXT_DEPLOYMENT_ID
   }
 
+  if (result.deploymentId && process.env.VERCEL_IMMUTABLE_DEPLOYMENT_ID) {
+    result.experimental.immutableAssetToken =
+      process.env.VERCEL_IMMUTABLE_DEPLOYMENT_ID
+  }
+
   const tracingRoot = result?.outputFileTracingRoot
   const turbopackRoot = result?.turbopack?.root
 
